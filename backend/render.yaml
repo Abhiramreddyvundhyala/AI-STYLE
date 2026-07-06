@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: style-fusion-backend
+    runtime: node
+    rootDir: backend
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      # Add the following secrets in Render dashboard → Environment:
+      # SUPABASE_URL
+      # SUPABASE_ANON_KEY
+      # SUPABASE_SERVICE_ROLE_KEY
+      # OPENAI_API_KEY  (or GPT_IMAGE_API_KEY)
+      # GEMINI_API_KEY
+      # REPLICATE_API_TOKEN
+      # RAZORPAY_KEY_ID
+      # RAZORPAY_KEY_SECRET
+      # RAZORPAY_WEBHOOK_SECRET
+      # ENCRYPTION_KEY
+      # FRONTEND_ORIGIN  (your Vercel URL, e.g. https://your-app.vercel.app)
