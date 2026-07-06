@@ -8,6 +8,7 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { backendApi } from '@/lib/backendApi';
 import { toast } from 'sonner';
 import type { CreditPackage, AdminConfig } from '@/lib/credits.types';
 
@@ -140,16 +141,13 @@ export function useAdminConfig() {
   return useQuery<AdminConfig>({
     queryKey: ['admin', 'config'],
     queryFn: async () => {
-      // Try edge function first
-      const { data, error } = await supabase.functions.invoke<{ data: AdminConfig }>('admin-config', {
-        method: 'GET',
-      });
-
-      if (!error && data?.data) {
-        return data.data;
+      try {
+        const data = await backendApi.get<{ data: AdminConfig }>('admin-config');
+        if (data?.data) return data.data;
+      } catch (_err) {
+        // Fallback: direct Supabase query
       }
 
-      // Fallback: direct Supabase query
       const { data: rows, error: rowErr } = await supabase
         .from('admin_config')
         .select('key, value')
@@ -180,28 +178,7 @@ export function useUpdateAdminConfig() {
 
   return useMutation({
     mutationFn: async (updates: Partial<AdminConfig>) => {
-      const { data, error } = await supabase.functions.invoke('admin-config', {
-        method: 'PUT',
-        body: updates,
-      });
-
-      if (error) {
-        // Fallback: direct upsert to admin_config table
-        const upserts = Object.entries(updates).map(([key, value]) => ({
-          key,
-          value: String(value),
-          updated_at: new Date().toISOString(),
-        }));
-
-        for (const upsert of upserts) {
-          const { error: upsertErr } = await supabase
-            .from('admin_config')
-            .upsert(upsert, { onConflict: 'key' });
-          if (upsertErr) throw new Error(upsertErr.message);
-        }
-        return { success: true };
-      }
-
+      const data = await backendApi.put('admin-config', updates);
       return data;
     },
     onSuccess: () => {

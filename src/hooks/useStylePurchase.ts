@@ -15,6 +15,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { backendApi } from '@/lib/backendApi';
 import { useAuth } from './useAuth';
 import { toast } from 'sonner';
 
@@ -85,25 +86,23 @@ export function usePurchaseStyle() {
 
       await loadRazorpay();
 
-      // ── Step 1: Create Razorpay order via edge function ─────────────────────
-      const { data: orderData, error: orderError } = await supabase.functions.invoke(
-        'style-purchase',
-        {
-          body: {
-            style_id: styleId,
-            currency: 'INR',
-          },
-        }
-      );
+      // ── Step 1: Create Razorpay order via Render backend ────────────────────
+      const orderData = await backendApi.post<{
+        order_id: string;
+        razorpay_key_id: string;
+        amount: number;
+        currency: string;
+        style_title: string;
+        already_purchased?: boolean;
+        purchase_id?: string;
+      }>('style-purchase', { style_id: styleId, currency: 'INR' });
 
-      if (orderError) {
-        if (orderError.context?.status === 404 || orderError.message?.includes('not found')) {
-          throw new Error('Payment service is being set up. Please try again shortly.');
-        }
-        throw new Error(orderError.message ?? 'Failed to create payment order');
+      // Already purchased (free style or duplicate)
+      if (orderData.already_purchased) {
+        return { success: true, purchase_id: orderData.purchase_id ?? '' };
       }
 
-      if (!orderData) throw new Error('No order data returned');
+      if (!orderData.order_id) throw new Error('No order data returned');
 
       // ── Step 2: Open Razorpay checkout ──────────────────────────────────────
       setIsPaymentOpen(true);
@@ -139,19 +138,13 @@ export function usePurchaseStyle() {
         rzp.open();
       });
 
-      // ── Step 3: Verify payment + record purchase ─────────────────────────────
-      const { data: verifyData, error: verifyError } = await supabase.functions.invoke(
+      // ── Step 3: Verify payment + record purchase via Render backend ─────────
+      const verifyData = await backendApi.post<{ success: boolean; purchase_id: string }>(
         'verify-style-purchase',
-        { body: { ...paymentResponse, style_id: styleId, seller_id: sellerId ?? null } }
+        { ...paymentResponse, style_id: styleId, seller_id: sellerId ?? null }
       );
 
-      if (verifyError) {
-        throw new Error(verifyError.message ?? 'Payment verification failed');
-      }
-      if (!verifyData?.success) {
-        throw new Error('Payment verification returned failure');
-      }
-
+      if (!verifyData?.success) throw new Error('Payment verification returned failure');
       return verifyData as { success: boolean; purchase_id: string };
     },
 

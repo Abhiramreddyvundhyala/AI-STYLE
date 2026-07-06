@@ -39,8 +39,9 @@ const PORT = parseInt(process.env.PORT ?? '10000', 10);
 
 // ── CORS ──────────────────────────────────────────────────────────────────────
 const allowedOrigins = [
-  process.env.FRONTEND_ORIGIN,          // e.g. https://your-app.vercel.app
-  'http://localhost:5173',              // Vite dev server
+  process.env.FRONTEND_ORIGIN,                // set in Render env vars
+  'https://ai-style-two.vercel.app',          // your Vercel frontend
+  'http://localhost:5173',                    // Vite dev server
   'http://localhost:3000',
 ].filter(Boolean) as string[];
 

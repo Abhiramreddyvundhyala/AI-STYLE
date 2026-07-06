@@ -23,6 +23,7 @@ import {
   keepPreviousData,
 } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { backendApi } from '@/lib/backendApi';
 import { toast } from 'sonner';
 import type {
   UserCredits,
@@ -167,23 +168,11 @@ export function useBuyCredits() {
       // Step 1: Load Razorpay checkout.js
       await loadRazorpayScript();
 
-      // Step 2: Create Razorpay order via Edge Function
-      // supabase.functions.invoke() handles auth header + CORS automatically
-      const { data: orderData, error: orderError } = await supabase.functions.invoke<CreateOrderResponse>(
+      // Step 2: Create Razorpay order via Render backend
+      const orderData = await backendApi.post<CreateOrderResponse>(
         'create-payment-order',
-        { body: { package_id: packageId, currency } }
+        { package_id: packageId, currency }
       );
-
-      if (orderError) {
-        if (orderError.message?.includes('429') || orderError.context?.status === 429) {
-          throw new Error('Too many requests. Please wait a moment before trying again.');
-        }
-        // If function not deployed, show a helpful message
-        if (orderError.context?.status === 404 || orderError.message?.includes('not found')) {
-          throw new Error('Payment service is being set up. Please deploy the edge functions first.');
-        }
-        throw new Error(orderError.message ?? 'Failed to create payment order');
-      }
 
       if (!orderData) throw new Error('No order data returned');
 
@@ -223,17 +212,13 @@ export function useBuyCredits() {
         rzp.open();
       });
 
-      // Step 4: Verify payment signature + atomically add credits
-      const { data: verifyData, error: verifyError } = await supabase.functions.invoke<VerifyPaymentResponse>(
+      // Step 4: Verify payment signature + atomically add credits via Render backend
+      const verifyData = await backendApi.post<VerifyPaymentResponse>(
         'verify-payment',
-        { body: paymentResponse }
+        paymentResponse
       );
 
-      if (verifyError) {
-        throw new Error(verifyError.message ?? 'Payment verification failed');
-      }
       if (!verifyData) throw new Error('No verification data returned');
-
       return verifyData;
     },
 
