@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "lib": ["ES2020", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "typeRoots": [
+      "./_types",
+      "../../node_modules/@types"
+    ]
+  },
+  "include": [
+    "**/*.ts",
+    "_types/**/*.d.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}
