@@ -103,6 +103,11 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ Style Fusion backend listening on port ${PORT}`);
   console.log(`   NODE_ENV: ${process.env.NODE_ENV ?? 'development'}`);
   console.log(`   CORS allowed origins: ${allowedOrigins.join(', ')}`);
+  // Razorpay key diagnostics (safe — shows prefix only, not full secret)
+  const rzpId = process.env.RAZORPAY_KEY_ID ?? '';
+  const rzpSecret = process.env.RAZORPAY_KEY_SECRET ?? '';
+  console.log(`   RAZORPAY_KEY_ID: ${rzpId ? rzpId.slice(0, 12) + '...' : '❌ NOT SET'}`);
+  console.log(`   RAZORPAY_KEY_SECRET: ${rzpSecret ? '✅ set (' + rzpSecret.length + ' chars)' : '❌ NOT SET'}`);
 });
 
 export default app;
