@@ -80,8 +80,9 @@ router.post('/', requireAuth, async (req: Request, res: Response): Promise<void>
     }
 
     // ── Paid style: create Razorpay order ─────────────────────────────────
-    const razorpayKeyId = process.env.RAZORPAY_KEY_ID;
-    const razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET;
+    // .trim() guards against accidental whitespace/newlines in env var values
+    const razorpayKeyId = (process.env.RAZORPAY_KEY_ID ?? '').trim();
+    const razorpayKeySecret = (process.env.RAZORPAY_KEY_SECRET ?? '').trim();
 
     if (!razorpayKeyId || !razorpayKeySecret) {
       log('ERROR: Razorpay keys not configured');
@@ -89,6 +90,12 @@ router.post('/', requireAuth, async (req: Request, res: Response): Promise<void>
       return;
     }
 
+    log('Razorpay credentials check', {
+      key_id_prefix: razorpayKeyId.slice(0, 12) + '...',
+      key_id_length: razorpayKeyId.length,
+      secret_length: razorpayKeySecret.length,
+      mode: razorpayKeyId.startsWith('rzp_live_') ? 'LIVE' : 'TEST',
+    });
     const amountPaise = Math.round((style.price as number) * 100);
     const rzpResponse = await fetch('https://api.razorpay.com/v1/orders', {
       method: 'POST',
