@@ -12,6 +12,7 @@ import {
   AlertCircle,
   ShoppingCart,
   Loader2,
+  Eye,
 } from "lucide-react";
 import { toast } from "sonner";
 import type { Style } from "@/hooks/useStyles";
@@ -24,9 +25,12 @@ import {
   usePurchaseStyle,
   useDownloadImage,
 } from "@/hooks/useStylePurchase";
+import { useCreditsBalance, useRefreshCredits, useDecrementCreditOptimistically } from "@/hooks/useCredits";
 import { AuthModal } from "./AuthModal";
+import { CreditStore } from "./CreditStore";
 import { DEFAULT_MODEL_ID } from "@/types/models";
 import { supabase } from "@/lib/supabase";
+import { backendApi } from "@/lib/backendApi";
 
 export function StyleModal({
   style,
@@ -45,6 +49,10 @@ export function StyleModal({
   const [isDragOver, setIsDragOver] = useState(false);
   const [textModifications, setTextModifications] = useState<string>("");
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [showCreditStore, setShowCreditStore] = useState(false);
+  const [previewTimeLeft, setPreviewTimeLeft] = useState(5);
+  const [previewExpired, setPreviewExpired] = useState(false);
+  const [previewCount, setPreviewCount] = useState(2); // 2 extra previews allowed
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { openStyle } = useApp();
   const { follows, toggleFollow } = useFollows();
@@ -55,6 +63,13 @@ export function StyleModal({
   const { data: alreadyPurchased = false } = useCheckStylePurchased(style.id);
   const { purchaseStyle, isPending: isPurchasing } = usePurchaseStyle();
   const { download, isDownloading } = useDownloadImage();
+
+  // Credits
+  const { data: credits } = useCreditsBalance();
+  const refreshCredits = useRefreshCredits();
+  const decrementCredit = useDecrementCreditOptimistically();
+  const totalCredits = (credits?.free_credits_remaining ?? 0) + (credits?.paid_credits ?? 0);
+  const hasCredits = totalCredits > 0;
 
   // Is this style free to download?
   const isFreeStyle = !style.price || style.price === 0;
@@ -73,6 +88,41 @@ export function StyleModal({
       document.body.style.overflow = "";
     };
   }, [onClose]);
+
+  // 5-second clear preview when result arrives
+  useEffect(() => {
+    if (stage !== "result" || canDownload) return;
+    setPreviewTimeLeft(5);
+    setPreviewExpired(false);
+    const interval = setInterval(() => {
+      setPreviewTimeLeft((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          setPreviewExpired(true);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [stage, resultImage]);
+
+  const handlePreviewAgain = () => {
+    if (previewCount <= 0) return;
+    setPreviewCount((c) => c - 1);
+    setPreviewTimeLeft(5);
+    setPreviewExpired(false);
+    const interval = setInterval(() => {
+      setPreviewTimeLeft((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          setPreviewExpired(true);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  };
 
   // Real AI generation using async job queue
   // generate-universal returns a jobId immediately; we poll get-job-status until done
@@ -100,7 +150,9 @@ export function StyleModal({
             byteArray[i] = byteCharacters.charCodeAt(i);
           }
           const blob = new Blob([byteArray], { type: 'image/jpeg' });
-          const fileName = `temp-${Date.now()}.jpg`;
+          // Use user-scoped path to prevent guessing other users' uploads (C4 fix)
+          const userId = session?.user?.id ?? 'anon';
+          const fileName = `${userId}/temp-${Date.now()}.jpg`;
 
           const { error: uploadError } = await supabase.storage
             .from('user-uploads')
@@ -108,46 +160,31 @@ export function StyleModal({
 
           if (uploadError) throw new Error(`Failed to upload image: ${uploadError.message}`);
 
-          const { data: { publicUrl } } = supabase.storage
+          // Use a signed URL (1 hour) — private bucket, not public URL (C4 fix)
+          const { data: signedData, error: signedError } = await supabase.storage
             .from('user-uploads')
-            .getPublicUrl(fileName);
+            .createSignedUrl(fileName, 3600);
 
-          userImageUrl = publicUrl;
-          console.log('Face image uploaded:', publicUrl);
+          if (signedError || !signedData?.signedUrl) {
+            throw new Error('Failed to get signed URL for uploaded photo');
+          }
+          userImageUrl = signedData.signedUrl;
+          // Do NOT log userImageUrl — it is a private signed URL (L1 fix)
         }
 
-        // ── Start job (returns jobId immediately, ~2s) ──────────────────────
+        // ── Start job via authenticated backend API ──────────────────────────
         setProcessingStatus("Queuing generation...");
 
-        const startResp = await fetch(
-          `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-universal`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              // Use the user's JWT — NOT the anon key.
-              // The edge function will verify this token server-side.
-              'Authorization': `Bearer ${session?.access_token ?? import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-            },
-            body: JSON.stringify({
-              modelId: DEFAULT_MODEL_ID,
-              styleId: style.id,
-              userImageUrl,
-              textModifications: textModifications.trim() || undefined,
-            }),
-          }
-        );
+        const startData = await backendApi.post<{ jobId: string }>('generate-universal', {
+          modelId: DEFAULT_MODEL_ID,
+          styleId: style.id,
+          userImageUrl,
+          textModifications: textModifications.trim() || undefined,
+        });
 
-        if (!startResp.ok) {
-          const errText = await startResp.text();
-          let msg = 'Generation failed to start';
-          try { msg = JSON.parse(errText).error || msg; } catch { msg = errText || msg; }
-          throw new Error(msg);
-        }
-
-        const { jobId } = await startResp.json();
+        const { jobId } = startData;
         if (!jobId) throw new Error('Server did not return a job ID');
-        console.log('Job started:', jobId);
+        // Do NOT log jobId — avoid leaking job identifiers
 
         // ── Poll for result ─────────────────────────────────────────────────
         const pollStart = Date.now();
@@ -165,35 +202,25 @@ export function StyleModal({
             throw new Error('Generation timed out after 5 minutes. Please try again.');
           }
 
-          const pollResp = await fetch(
-            `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-job-status`,
-            {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${session?.access_token ?? import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-              },
-              body: JSON.stringify({ jobId }),
-            }
-          );
+          // ── Poll for result via authenticated backend API ──────────────────
+          const job = await backendApi.post<{ status: string; imageUrl?: string; error?: string }>(
+            'get-job-status',
+            { jobId }
+          ).catch(() => null); // transient error — keep polling
 
-          if (!pollResp.ok) continue; // transient error — keep polling
-
-          const job = await pollResp.json();
-          console.log('Job status:', job.status, 'elapsed:', elapsed, 's');
+          if (!job) continue;
 
           if (job.status === 'completed' && job.imageUrl) {
             if (!cancelled) {
               setResultImage(job.imageUrl);
               setStage("result");
               setProcessingStatus("Done! ✨");
+              refreshCredits(); // force server refetch so navbar/badge update
 
-              // Clean up uploaded face image
-              if (userImageUrl) {
-                const fileName = userImageUrl.split('/').pop();
-                if (fileName) {
-                  supabase.storage.from('user-uploads').remove([fileName]).catch(() => {});
-                }
+              // Clean up uploaded face image (fire-and-forget, user-scoped path)
+              if (userImageUrl && session?.user?.id) {
+                const fileName = `${session.user.id}/temp-${Date.now()}.jpg`;
+                supabase.storage.from('user-uploads').remove([fileName]).catch(() => {});
               }
             }
             return;
@@ -208,8 +235,18 @@ export function StyleModal({
       } catch (err: unknown) {
         if (!cancelled) {
           const msg = err instanceof Error ? err.message : 'AI generation failed';
-          setGeneratingError(msg);
-          toast.error("Generation failed", { description: msg });
+          // Check for out-of-credits: server returns code OR message
+          const isNoCredits =
+            msg.includes('INSUFFICIENT_CREDITS') ||
+            msg.toLowerCase().includes('no credits') ||
+            msg.toLowerCase().includes('credits remaining');
+          if (isNoCredits) {
+            setGeneratingError('__NO_CREDITS__');
+            refreshCredits(); // restore correct count (optimistic was wrong if edge rejected)
+          } else {
+            setGeneratingError(msg);
+            toast.error('Generation failed', { description: msg });
+          }
         }
       }
     };
@@ -256,26 +293,37 @@ export function StyleModal({
   );
 
   const handleGenerate = () => {
-    // ── AUTH GATE: never allow unauthenticated generation ────────────────────
+    // ── AUTH GATE ────────────────────────────────────────────────
     if (!isAuthenticated) {
       setShowAuthModal(true);
       toast.info('Please sign in to generate images');
       return;
     }
-    // If no image uploaded, set a placeholder to trigger processing
-    if (!uploadedImage) {
-      setUploadedImage("no-reference-image");
+    // ── CREDIT GATE ───────────────────────────────────────────────
+    if (!hasCredits) {
+      setShowCreditStore(true);
+      toast.info('No credits remaining — buy a pack to continue');
+      return;
     }
-    setStage("processing");
+    // ── OPTIMISTIC DECREMENT: drop counter in UI immediately ─────
+    decrementCredit();
+    if (!uploadedImage) {
+      setUploadedImage('no-reference-image');
+    }
+    setStage('processing');
   };
+
 
   const handleRemoveImage = () => {
     setUploadedImage(null);
     setResultImage(null);
     setGeneratingError(null);
-    setProcessingStatus("");
-    setStage("upload");
-    if (fileInputRef.current) fileInputRef.current.value = "";
+    setProcessingStatus('');
+    setStage('upload');
+    setPreviewExpired(false);
+    setPreviewTimeLeft(5);
+    setPreviewCount(2);
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const related = allStyles
@@ -402,328 +450,321 @@ export function StyleModal({
                       }}
                       className="group/related rounded-lg overflow-hidden glass-card transition-all duration-300 hover:-translate-y-0.5"
                     >
-                      <div className="aspect-square overflow-hidden">
-                        <img
-                          src={r.sample_image_url}
-                          alt={r.title}
-                          className="w-full h-full object-cover group-hover/related:scale-110 transition-transform duration-500"
-                        />
-                      </div>
-                      <div className="px-1.5 py-1 text-[9px] truncate text-left text-gray-700">
-                        {r.title}
-                      </div>
-                    </button>
-                  ))}
+                        <div className="aspect-square overflow-hidden">
+                          <img
+                            src={r.sample_image_url}
+                            alt={r.title}
+                            className="w-full h-full object-cover group-hover/related:scale-110 transition-transform duration-500"
+                          />
+                        </div>
+                        <div className="px-1.5 py-1 text-[9px] truncate text-left text-gray-700">
+                          {r.title}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
             )}
           </div>
 
-          {/* ═══════════════ RIGHT PANEL — Upload / Result ═══════════════ */}
-          <div className="flex-1 p-3 sm:p-4 flex flex-col min-h-0 overflow-hidden">
-                  {/* Compact Header */}
-                  <div className="flex items-center justify-between mb-2 shrink-0">
-                    <div className="flex-1">
-                      <h3 className="text-sm font-display font-bold text-gray-900 leading-tight">
-                        See Yourself In This Style
-                      </h3>
-                      <p className="text-[10px] text-gray-600">
-                        Free AI • High quality download
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-1 text-[9px] text-violet-light bg-violet-DEFAULT/10 border border-violet-DEFAULT/20 rounded px-1.5 py-0.5 h-fit">
-                      <Lock size={8} /> Protected
-                    </div>
+          {/* ═══════════════ RIGHT PANEL ═══════════════ */}
+          <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+
+            {/* ───── UPLOAD / PROCESSING STAGES ───────────────────────── */}
+            {stage !== "result" && (
+              <div className="flex flex-col flex-1 min-h-0 p-4 sm:p-5 overflow-y-auto">
+                {/* Header */}
+                <div className="flex items-center justify-between mb-3 shrink-0">
+                  <div>
+                    <h3 className="text-sm font-display font-bold text-gray-900">See Yourself In This Style</h3>
+                    <p className="text-[10px] text-gray-500 mt-0.5">Free AI generation • High quality output</p>
                   </div>
-
-
-                  {/* Text Modifications Input */}
-                  <div className="mb-3 shrink-0">
-                    <label className="text-[9px] font-semibold text-gray-600 uppercase tracking-wider block mb-1.5">
-                      Text Modifications (Optional)
-                    </label>
-                    <textarea
-                      value={textModifications}
-                      onChange={(e) => setTextModifications(e.target.value)}
-                      placeholder='e.g., "Replace John to Sarah" or "Change welcome to hello"'
-                      className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-DEFAULT/20 focus:border-violet-DEFAULT transition-all resize-none"
-                      rows={2}
-                    />
-                    <p className="text-[9px] text-gray-500 mt-1">
-                      Tell the AI what text to modify in the style (e.g., "replace this to that")
-                    </p>
-                  </div>
-
-                  {/* ─── Upload / Processing / Result Area ─── */}
-                  <div className="flex-1 flex flex-col min-h-0 justify-center">
-                    {/* Upload state */}
-                    {stage === "upload" && !uploadedImage && (
-                      <>
-                        <div
-                          className={`flex-1 max-h-[380px] border-2 border-dashed rounded-lg py-6 px-4 text-center cursor-pointer transition-all duration-300 group flex flex-col items-center justify-center ${
-                            isDragOver
-                              ? "border-violet-DEFAULT/60 bg-violet-DEFAULT/[0.08]"
-                              : "border-violet-DEFAULT/30 hover:border-violet-DEFAULT/60 bg-violet-DEFAULT/[0.03] hover:bg-violet-DEFAULT/[0.06]"
-                          }`}
-                          onDragOver={(e) => {
-                            e.preventDefault();
-                            setIsDragOver(true);
-                          }}
-                          onDragLeave={() => setIsDragOver(false)}
-                          onDrop={handleDrop}
-                          onClick={() => fileInputRef.current?.click()}
-                        >
-                          <input
-                            ref={fileInputRef}
-                            type="file"
-                            accept="image/jpeg,image/png,image/webp"
-                            className="hidden"
-                            onChange={handleFileInput}
-                          />
-                          <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-violet-DEFAULT/20 to-magenta/10 border border-violet-DEFAULT/20 flex items-center justify-center transition-transform duration-300 group-hover:scale-110">
-                            <Upload className="text-violet-light" size={20} />
-                          </div>
-                          <div className="mt-3 font-semibold text-gray-800 text-base">
-                            Drop your photo here (optional)
-                          </div>
-                          <div className="text-xs text-violet-light/70 mt-1 underline underline-offset-2">
-                            or click to browse
-                          </div>
-                          <div className="text-[10px] text-gray-500 mt-2">
-                            JPG, PNG, WEBP up to 10MB
-                          </div>
-                        </div>
-                        
-                        {/* Generate button */}
-                        <div className="mt-3 text-center">
-                          <button
-                            onClick={handleGenerate}
-                            className="w-full py-3 rounded-xl bg-gradient-to-r from-violet-500 to-purple-600 text-white font-bold text-base shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-0.5 flex items-center justify-center gap-2"
-                          >
-                            <Sparkles size={16} /> Generate Image
-                          </button>
-                          <p className="text-[9px] text-gray-500 mt-2">
-                            {textModifications.trim() && !uploadedImage
-                              ? "Will generate with text modifications"
-                              : !textModifications.trim() && !uploadedImage
-                              ? "Will generate with original prompt"
-                              : "Upload photo to see yourself in this style"}
-                          </p>
-                        </div>
-                      </>
-                    )}
-
-                    {/* Uploaded preview — ready to generate */}
-                    {stage === "upload" && uploadedImage && uploadedImage !== "no-reference-image" && (
-                      <div className="flex flex-col animate-fade-in items-center justify-center flex-1">
-                        <div className="relative rounded-lg overflow-hidden w-40 h-40 border border-gray-200">
-                          <img
-                            src={uploadedImage}
-                            alt="Your photo"
-                            className="w-full h-full object-cover"
-                          />
-                          <button
-                            onClick={handleRemoveImage}
-                            className="absolute top-1.5 right-1.5 w-6 h-6 rounded-lg bg-white/90 hover:bg-red-50 border border-gray-200 flex items-center justify-center transition-all duration-200"
-                          >
-                            <Trash2 size={12} className="text-gray-700" />
-                          </button>
-                        </div>
-                        <button
-                          onClick={handleGenerate}
-                          className="mt-4 w-full max-w-xs py-3 rounded-xl bg-gradient-to-r from-violet-500 to-purple-600 text-white font-bold text-base shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-0.5 flex items-center justify-center gap-2"
-                        >
-                          <Sparkles size={16} /> Generate With Photo
-                        </button>
-                        {textModifications.trim() && (
-                          <p className="text-[9px] text-gray-600 text-center mt-2">
-                            Will apply your text modifications
-                          </p>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Processing state */}
-                    {stage === "processing" && (
-                      <div className="flex-1 flex flex-col items-center justify-center py-10 animate-fade-in">
-                        {generatingError ? (
-                          /* Error state */
-                          <div className="text-center px-4">
-                            <div className="w-16 h-16 sm:w-20 sm:h-20 mx-auto mb-4 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center">
-                              <AlertCircle size={28} className="text-red-400" />
-                            </div>
-                            <div className="font-display text-base sm:text-lg font-bold text-gray-900 mb-2">
-                              Generation Failed
-                            </div>
-                            <p className="text-xs sm:text-sm text-gray-600 max-w-sm mx-auto mb-4">
-                              {generatingError}
-                            </p>
-                            <button
-                              onClick={handleRemoveImage}
-                              className="px-4 py-2 rounded-xl bg-gray-100 border border-gray-200 text-sm text-gray-700 hover:bg-gray-200 transition-all"
-                            >
-                              ← Try another photo
-                            </button>
-                          </div>
-                        ) : (
-                          /* Spinner + status */
-                          <>
-                            <div className="relative w-16 h-16 sm:w-20 sm:h-20">
-                              <div className="absolute inset-0 rounded-full border-[3px] border-violet-DEFAULT/15" />
-                              <div className="absolute inset-0 rounded-full border-[3px] border-transparent border-t-violet-DEFAULT animate-spin" />
-                              <div
-                                className="absolute inset-3 rounded-full border-[2px] border-transparent border-b-magenta animate-spin"
-                                style={{
-                                  animationDirection: "reverse",
-                                  animationDuration: "1.5s",
-                                }}
-                              />
-                              <div className="absolute inset-0 flex items-center justify-center">
-                                <Sparkles
-                                  size={18}
-                                  className="text-violet-light animate-pulse"
-                                />
-                              </div>
-                            </div>
-                            <div className="mt-5 font-display text-base sm:text-lg font-bold text-gray-900">
-                              {processingStatus || "Applying style magic..."}
-                            </div>
-                            <div className="mt-1.5 text-xs sm:text-sm text-gray-600">
-                              Processing securely 🔒 · This may take 10–30s
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Result state — output replaces the upload zone */}
-                    {stage === "result" && resultImage && (
-                      <div className="flex flex-col gap-2.5 flex-1">
-                        {/* Result image */}
-                        <div className="relative rounded-lg overflow-hidden bg-gray-100 border border-violet-DEFAULT/20 flex-1 flex items-center justify-center min-h-0">
-                          <img
-                            src={resultImage}
-                            alt="Styled result"
-                            className="w-full h-full object-contain"
-                          />
-                          {/* Blur overlay for unpurchased paid styles */}
-                          {!canDownload && (
-                            <div className="absolute inset-0 backdrop-blur-xl bg-black/40 flex flex-col items-center justify-center gap-3 rounded-lg">
-                              <Lock size={28} className="text-white" />
-                              <p className="text-white font-semibold text-sm text-center px-4">
-                                Purchase to unlock full download
-                              </p>
-                              <p className="text-white/70 text-xs">
-                                ₹{style.price} one-time
-                              </p>
-                            </div>
-                          )}
-                        </div>
-
-                        <p className="text-center text-xs text-gray-700 font-medium -mt-1">
-                          Your AI-generated image is ready! ✨
-                        </p>
-
-                        {/* Download / Buy button — conditional on purchase */}
-                        {canDownload ? (
-                          /* ─── FREE or PURCHASED: allow direct download ─── */
-                          <button
-                            onClick={() => download(
-                              resultImage,
-                              `${style.title.replace(/\s+/g, '-')}-${Date.now()}.png`
-                            )}
-                            disabled={isDownloading}
-                            className="w-full py-3.5 rounded-xl bg-gradient-to-r from-green-500 to-emerald-600 text-white font-bold text-base hover:shadow-[0_12px_40px_rgba(16,185,129,0.5)] transition-all duration-300 hover:-translate-y-0.5 flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
-                          >
-                            {isDownloading ? (
-                              <><Loader2 size={18} className="animate-spin" /> Downloading...</>
-                            ) : (
-                              <><Download size={18} className="font-bold" /> Download Image</>
-                            )}
-                          </button>
-                        ) : (
-                          /* ─── PAID & NOT PURCHASED: show buy button ─── */
-                          <button
-                            onClick={async () => {
-                              if (!isAuthenticated) {
-                                setShowAuthModal(true);
-                                return;
-                              }
-                              try {
-                                await purchaseStyle(
-                                  style.id,
-                                  style.title,
-                                  style.price,
-                                  style.seller_id ?? null
-                                );
-                                // After successful purchase, download immediately
-                                await download(
-                                  resultImage,
-                                  `${style.title.replace(/\s+/g, '-')}-${Date.now()}.png`
-                                );
-                              } catch {
-                                // errors handled in hook
-                              }
-                            }}
-                            disabled={isPurchasing || isDownloading}
-                            className="w-full py-3.5 rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white font-bold text-base hover:shadow-[0_12px_40px_rgba(124,58,237,0.5)] transition-all duration-300 hover:-translate-y-0.5 flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
-                          >
-                            {isPurchasing ? (
-                              <><Loader2 size={18} className="animate-spin" /> Processing Payment...</>
-                            ) : (
-                              <><ShoppingCart size={18} /> Buy & Download — ₹{style.price}</>
-                            )}
-                          </button>
-                        )}
-
-                        <div className="flex items-center justify-between text-xs">
-                          <p className="text-gray-600 flex items-center gap-1">
-                            <ShieldCheck size={13} className="inline text-green-500" />
-                            {canDownload ? 'No watermark · Full HD' : `One-time purchase · Unlimited downloads`}
-                          </p>
-                          <button
-                            onClick={handleRemoveImage}
-                            className="text-xs text-gray-600 hover:text-gray-900 transition-colors underline"
-                          >
-                            Try another photo
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Mobile-only: Related styles */}
-                  {relatedFill.length > 0 && (
-                    <div className="mt-4 md:hidden">
-                      <h4 className="text-[11px] font-semibold text-gray-600 uppercase tracking-wider mb-2">
-                        More like this
-                      </h4>
-                      <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-none -mx-1 px-1">
-                        {relatedFill.map((r) => (
-                          <button
-                            key={r.id}
-                            onClick={() => {
-                              setStage("upload");
-                              setUploadedImage(null);
-                              openStyle(r.id);
-                            }}
-                            className="shrink-0 w-24 rounded-xl overflow-hidden glass-card"
-                          >
-                            <div className="aspect-square overflow-hidden">
-                              <img
-                                src={r.sample_image_url}
-                                alt={r.title}
-                                className="w-full h-full object-cover"
-                              />
-                            </div>
-                            <div className="px-2 py-1 text-[10px] truncate text-left text-gray-700">
-                              {r.title}
-                            </div>
-                          </button>
-                        ))}
-                      </div>
+                  {/* Credit badge */}
+                  {isAuthenticated && (
+                    <button
+                      onClick={() => setShowCreditStore(true)}
+                      className={`flex items-center gap-1 text-[9px] font-semibold rounded-lg px-2 py-1 transition-all ${
+                        totalCredits === 0
+                          ? 'text-red-600 bg-red-50 border border-red-200 animate-pulse'
+                          : totalCredits <= 1
+                          ? 'text-amber-600 bg-amber-50 border border-amber-200'
+                          : 'text-emerald-600 bg-emerald-500/10 border border-emerald-500/20'
+                      }`}
+                    >
+                      <Sparkles size={8} />
+                      {totalCredits === 0 ? '0 left — Buy Credits' : `${totalCredits} credit${totalCredits !== 1 ? 's' : ''} left`}
+                    </button>
+                  )}
+                  {!isAuthenticated && (
+                    <div className="flex items-center gap-1 text-[9px] text-emerald-600 bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-2 py-1">
+                      <ShieldCheck size={8} /> Sign in to generate
                     </div>
                   )}
+                </div>
+
+                {/* Text Modifications */}
+                <div className="mb-4 shrink-0">
+                  <label className="text-[9px] font-semibold text-gray-500 uppercase tracking-widest block mb-1.5">
+                    Text Modifications <span className="normal-case font-normal text-gray-400">(optional)</span>
+                  </label>
+                  <textarea
+                    value={textModifications}
+                    onChange={(e) => setTextModifications(e.target.value)}
+                    placeholder='e.g., "Replace John to Sarah"'
+                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-DEFAULT/20 focus:border-violet-DEFAULT transition-all resize-none bg-gray-50 placeholder:text-gray-400"
+                    rows={2}
+                  />
+                </div>
+
+                {/* Upload / Processing area */}
+                <div className="flex-1 flex flex-col min-h-0 justify-center">
+                  {/* Upload — no image */}
+                  {stage === "upload" && !uploadedImage && (
+                    <>
+                      <div
+                        className={`flex-1 max-h-[320px] border-2 border-dashed rounded-2xl py-8 px-4 text-center cursor-pointer transition-all duration-300 group flex flex-col items-center justify-center ${
+                          isDragOver
+                            ? "border-violet-DEFAULT/70 bg-violet-DEFAULT/[0.08]"
+                            : "border-gray-200 hover:border-violet-DEFAULT/50 bg-gray-50 hover:bg-violet-DEFAULT/[0.03]"
+                        }`}
+                        onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+                        onDragLeave={() => setIsDragOver(false)}
+                        onDrop={handleDrop}
+                        onClick={() => fileInputRef.current?.click()}
+                      >
+                        <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={handleFileInput} />
+                        <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-violet-DEFAULT/15 to-magenta/10 border border-violet-DEFAULT/15 flex items-center justify-center transition-transform duration-300 group-hover:scale-110 group-hover:shadow-lg">
+                          <Upload className="text-violet-DEFAULT" size={22} />
+                        </div>
+                        <p className="mt-3 font-semibold text-gray-800 text-sm">Drop your photo here</p>
+                        <p className="text-xs text-violet-DEFAULT/70 mt-1 underline underline-offset-2">or click to browse</p>
+                        <p className="text-[10px] text-gray-400 mt-2">JPG, PNG, WEBP • Max 10MB • Optional</p>
+                      </div>
+                      <button
+                        onClick={handleGenerate}
+                        disabled={!hasCredits}
+                        className={`mt-4 w-full py-3.5 rounded-2xl text-white font-bold text-sm shadow-lg transition-all duration-300 hover:-translate-y-0.5 flex items-center justify-center gap-2 ${
+                          !hasCredits
+                            ? 'bg-gray-300 cursor-not-allowed hover:translate-y-0'
+                            : 'bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:shadow-[0_12px_40px_rgba(124,58,237,0.4)]'
+                        }`}
+                      >
+                        <Sparkles size={16} />
+                        {!hasCredits ? 'No Credits — Buy to Generate' : 'Generate Image'}
+                      </button>
+                      {!hasCredits && (
+                        <button
+                          onClick={() => setShowCreditStore(true)}
+                          className="mt-2 w-full py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-white font-bold text-sm flex items-center justify-center gap-2 hover:shadow-lg transition-all"
+                        >
+                          🛒 Buy Credits — Starting ₹149
+                        </button>
+                      )}
+                      <p className="text-[10px] text-gray-400 text-center mt-2">
+                        {!hasCredits ? '3 free/month · Reset every calendar month' : textModifications.trim() ? "Will apply text modifications" : "Generates with original style prompt"}
+                      </p>
+                    </>
+                  )}
+
+                  {/* Upload — image selected */}
+                  {stage === "upload" && uploadedImage && uploadedImage !== "no-reference-image" && (
+                    <div className="flex flex-col items-center gap-4 animate-fade-in">
+                      <div className="relative rounded-2xl overflow-hidden w-36 h-36 border-2 border-violet-DEFAULT/20 shadow-lg">
+                        <img src={uploadedImage} alt="Your photo" className="w-full h-full object-cover" />
+                        <button
+                          onClick={handleRemoveImage}
+                          className="absolute top-1.5 right-1.5 w-7 h-7 rounded-lg bg-white/95 hover:bg-red-50 border border-gray-200 flex items-center justify-center transition-all shadow-sm"
+                        >
+                          <Trash2 size={13} className="text-gray-700" />
+                        </button>
+                      </div>
+                      <p className="text-xs text-gray-500">Photo ready — click generate</p>
+                      <button
+                        onClick={handleGenerate}
+                        disabled={!hasCredits}
+                        className={`w-full max-w-xs py-3.5 rounded-2xl text-white font-bold text-sm shadow-lg transition-all duration-300 hover:-translate-y-0.5 flex items-center justify-center gap-2 ${
+                          !hasCredits
+                            ? 'bg-gray-300 cursor-not-allowed hover:translate-y-0'
+                            : 'bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:shadow-[0_12px_40px_rgba(124,58,237,0.4)]'
+                        }`}
+                      >
+                        <Sparkles size={16} />
+                        {!hasCredits ? 'No Credits' : 'Generate With Photo'}
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Processing */}
+                  {stage === "processing" && (
+                    <div className="flex-1 flex flex-col items-center justify-center py-8 gap-5 animate-fade-in">
+                      {generatingError === '__NO_CREDITS__' ? (
+                        /* Out-of-credits state */
+                        <div className="text-center px-4">
+                          <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center">
+                            <span className="text-2xl">✨</span>
+                          </div>
+                          <p className="font-bold text-gray-900 mb-1">No Credits Remaining</p>
+                          <p className="text-xs text-gray-500 max-w-xs mx-auto mb-4">
+                            You've used all 3 free generations this month. Buy a credit pack to continue.
+                          </p>
+                          <button
+                            onClick={() => { handleRemoveImage(); setShowCreditStore(true); }}
+                            className="w-full py-3 rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white font-bold text-sm flex items-center justify-center gap-2 hover:shadow-lg transition-all"
+                          >
+                            🛒 Buy Credits — Starting ₹149
+                          </button>
+                          <p className="text-[10px] text-gray-400 mt-3">Credits reset every calendar month · 3 free on reset</p>
+                        </div>
+                      ) : generatingError ? (
+                        <div className="text-center">
+                          <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-red-50 border border-red-200 flex items-center justify-center">
+                            <AlertCircle size={28} className="text-red-400" />
+                          </div>
+                          <p className="font-bold text-gray-900 mb-1">Generation Failed</p>
+                          <p className="text-xs text-gray-500 max-w-xs mx-auto mb-4">{generatingError}</p>
+                          <button onClick={handleRemoveImage} className="px-5 py-2 rounded-xl bg-gray-100 border border-gray-200 text-sm text-gray-700 hover:bg-gray-200 transition-all">
+                            ← Try again
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="relative w-20 h-20">
+                            <div className="absolute inset-0 rounded-full border-[3px] border-violet-DEFAULT/10" />
+                            <div className="absolute inset-0 rounded-full border-[3px] border-transparent border-t-violet-DEFAULT animate-spin" />
+                            <div className="absolute inset-3 rounded-full border-[2px] border-transparent border-b-magenta animate-spin" style={{ animationDirection: "reverse", animationDuration: "1.5s" }} />
+                            <div className="absolute inset-0 flex items-center justify-center">
+                              <Sparkles size={20} className="text-violet-light animate-pulse" />
+                            </div>
+                          </div>
+                          <div className="text-center">
+                            <p className="font-display font-bold text-gray-900">{processingStatus || "Applying style magic..."}</p>
+                            <p className="text-xs text-gray-500 mt-1">Secure processing · 10–60s</p>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* ───── RESULT STAGE — redesigned premium layout ────────────────── */}
+            {stage === "result" && resultImage && (
+              <div className="flex flex-col h-full">
+
+                {/* Header strip */}
+                <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 shrink-0">
+                  <div className="flex items-center gap-2">
+                    <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-violet-DEFAULT to-magenta flex items-center justify-center">
+                      <Sparkles size={12} className="text-white" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-display font-bold text-gray-900 leading-none">AI Result Ready</p>
+                      <p className="text-[10px] text-gray-400 mt-0.5">{style.title}</p>
+                    </div>
+                  </div>
+                  {!canDownload && !previewExpired && (
+                    <div className="flex items-center gap-1.5 text-xs font-semibold text-violet-DEFAULT bg-violet-DEFAULT/10 border border-violet-DEFAULT/20 rounded-full px-3 py-1">
+                      <Eye size={11} /> Preview: {previewTimeLeft}s
+                    </div>
+                  )}
+                  {!canDownload && previewExpired && (
+                    <div className="flex items-center gap-1 text-[10px] font-semibold text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-2.5 py-1">
+                      <Lock size={9} /> Locked
+                    </div>
+                  )}
+                  {canDownload && (
+                    <div className="flex items-center gap-1 text-[10px] font-semibold text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-full px-2.5 py-1">
+                      <ShieldCheck size={9} /> Free download
+                    </div>
+                  )}
+                </div>
+
+                {/* Image area — takes all remaining space above the buy button */}
+                <div
+                  className="relative flex-1 min-h-0 bg-[#080810] overflow-hidden"
+                >
+                  <img
+                    src={resultImage}
+                    alt="Styled result"
+                    className="w-full h-full object-contain"
+                  />
+
+                  {/* Blur overlay — only after preview expires */}
+                  {!canDownload && previewExpired && (
+                    <div className="absolute inset-0 backdrop-blur-2xl bg-black/55 flex flex-col items-center justify-center gap-4">
+                      <div className="w-16 h-16 rounded-2xl bg-white/8 border border-white/15 backdrop-blur-sm flex items-center justify-center">
+                        <Lock size={28} className="text-white" />
+                      </div>
+                      <div className="text-center">
+                        <p className="text-white font-display font-bold text-lg">Purchase to Download</p>
+                        <p className="text-white/50 text-sm mt-1">₹{style.price} · one-time payment</p>
+                      </div>
+                      {previewCount > 0 ? (
+                        <button
+                          onClick={handlePreviewAgain}
+                          className="inline-flex items-center gap-2 text-sm font-semibold text-white bg-white/10 hover:bg-white/20 border border-white/20 px-5 py-2.5 rounded-xl transition-all duration-200 hover:scale-105"
+                        >
+                          <Eye size={14} /> Preview again (+5s)
+                          <span className="text-white/50 text-xs">· {previewCount} left</span>
+                        </button>
+                      ) : (
+                        <p className="text-white/30 text-xs">No more previews available</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Status bar */}
+                <div className="px-5 py-2 bg-gray-50 border-t border-gray-100 shrink-0">
+                  <p className="text-center text-[11px] text-gray-500">
+                    {!canDownload && !previewExpired
+                      ? `👁️ Previewing your styled image — blurs in ${previewTimeLeft}s`
+                      : canDownload
+                      ? "✨ Your AI-generated image is ready to download!"
+                      : "🔒 Preview expired — purchase to unlock full download"}
+                  </p>
+                </div>
+
+                {/* CTA section — always visible at bottom */}
+                <div className="px-5 py-4 bg-white border-t border-gray-100 shrink-0 space-y-2.5">
+                  {canDownload ? (
+                    <button
+                      onClick={() => download(resultImage, `${style.title.replace(/\s+/g, '-')}-${Date.now()}.png`)}
+                      disabled={isDownloading}
+                      className="w-full py-4 rounded-2xl bg-gradient-to-r from-emerald-500 to-green-500 text-white font-bold text-base shadow-lg hover:shadow-[0_12px_40px_rgba(16,185,129,0.4)] transition-all duration-300 hover:-translate-y-0.5 flex items-center justify-center gap-2.5 disabled:opacity-60"
+                    >
+                      {isDownloading ? <><Loader2 size={18} className="animate-spin" /> Downloading...</> : <><Download size={18} /> Download Image — Free</>}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={async () => {
+                        if (!isAuthenticated) { setShowAuthModal(true); return; }
+                        try {
+                          await purchaseStyle(style.id, style.title, style.price, style.seller_id ?? null);
+                          await download(resultImage, `${style.title.replace(/\s+/g, '-')}-${Date.now()}.png`);
+                        } catch { /* errors handled in hook */ }
+                      }}
+                      disabled={isPurchasing || isDownloading}
+                      className="w-full py-4 rounded-2xl bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white font-bold text-base shadow-lg hover:shadow-[0_12px_40px_rgba(124,58,237,0.5)] transition-all duration-300 hover:-translate-y-0.5 flex items-center justify-center gap-2.5 disabled:opacity-60"
+                    >
+                      {isPurchasing
+                        ? <><Loader2 size={18} className="animate-spin" /> Processing Payment...</>
+                        : <><ShoppingCart size={18} /> Buy &amp; Download — ₹{style.price}</>}
+                    </button>
+                  )}
+                  <div className="flex items-center justify-between text-xs text-gray-400">
+                    <span className="flex items-center gap-1">
+                      <ShieldCheck size={12} className="text-emerald-500" />
+                      {canDownload ? "No watermark · Full HD" : "One-time · Unlimited downloads"}
+                    </span>
+                    <button onClick={handleRemoveImage} className="hover:text-gray-700 transition-colors underline underline-offset-2">
+                      Try another
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -737,6 +778,27 @@ export function StyleModal({
         <AuthModal
           onClose={() => setShowAuthModal(false)}
         />
+      )}
+      {showCreditStore && createPortal(
+        <div
+          className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in"
+          onClick={() => setShowCreditStore(false)}
+        >
+          <div
+            className="glass-card w-full max-w-4xl max-h-[90vh] overflow-y-auto relative shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setShowCreditStore(false)}
+              className="absolute top-4 right-4 z-10 w-9 h-9 rounded-xl bg-gray-100 hover:bg-gray-200 border border-gray-200 flex items-center justify-center transition-all"
+              aria-label="Close"
+            >
+              <X size={16} />
+            </button>
+            <CreditStore />
+          </div>
+        </div>,
+        document.body
       )}
     </>
   );

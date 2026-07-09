@@ -89,8 +89,18 @@ export async function checkRateLimit(
     const remaining = Math.max(0, config.maxRequests - currentCount);
     return { allowed, remaining, resetAt };
   } catch (_err) {
-    console.warn('[rateLimiter] Error, failing open:', _err);
-    return { allowed: true, remaining: config.maxRequests, resetAt };
+    // H5 fix: Fail CLOSED on unexpected errors.
+    // Only exception: if the rate_limits table doesn't exist yet (pre-migration),
+    // we allow the request through with a warning. Any other error blocks the request.
+    const errMsg = _err instanceof Error ? _err.message : String(_err);
+    const isTableMissing = errMsg.includes('42P01') || errMsg.includes('does not exist');
+    if (isTableMissing) {
+      console.warn('[rateLimiter] rate_limits table missing — run migration. Allowing request.');
+      return { allowed: true, remaining: config.maxRequests, resetAt };
+    }
+    console.error('[rateLimiter] Unexpected error — failing CLOSED:', errMsg);
+    // Return allowed:false so the caller can return 503
+    return { allowed: false, remaining: 0, resetAt };
   }
 }
 

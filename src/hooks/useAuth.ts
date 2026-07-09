@@ -56,6 +56,7 @@ export function useAuth() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['auth'] });
+      queryClient.invalidateQueries({ queryKey: ['credits', 'balance'] });
       toast.success('Welcome back!');
       // Refresh the page to update all queries
       setTimeout(() => window.location.reload(), 500);
@@ -85,6 +86,7 @@ export function useAuth() {
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['auth'] });
+      queryClient.invalidateQueries({ queryKey: ['credits', 'balance'] });
       
       // Check if email confirmation is required
       if (data.user && !data.session) {

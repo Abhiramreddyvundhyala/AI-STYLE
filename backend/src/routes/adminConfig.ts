@@ -10,6 +10,8 @@
 import { Router, Request, Response } from 'express';
 import { requireAuth } from '../middleware/auth';
 import { adminClient } from '../lib/supabase';
+import { checkRateLimit, sendRateLimitResponse } from '../lib/rateLimiter';
+
 
 const router = Router();
 
@@ -25,7 +27,7 @@ async function isAdmin(userId: string): Promise<boolean> {
   return !!data;
 }
 
-// ── GET /admin-config ─────────────────────────────────────────────────────────
+// ── GET /admin-config ──────────────────────────────────────────────────
 router.get('/', requireAuth, async (req: Request, res: Response): Promise<void> => {
   const user = req.user!;
   const requestId = crypto.randomUUID();
@@ -33,7 +35,12 @@ router.get('/', requireAuth, async (req: Request, res: Response): Promise<void> 
     console.log(`[admin-config][${requestId}] ${msg}`, data ?? '');
 
   try {
+    // Rate limit admin reads: 20/min
+    const rateLimit = await checkRateLimit(adminClient, user.id, 'admin-config-read', { maxRequests: 20, windowSeconds: 60 });
+    if (!rateLimit.allowed) { sendRateLimitResponse(res, rateLimit.resetAt); return; }
+
     if (!(await isAdmin(user.id))) {
+
       res.status(403).json({ error: 'Admin access required', code: 'FORBIDDEN' });
       return;
     }
@@ -70,7 +77,12 @@ router.put('/', requireAuth, async (req: Request, res: Response): Promise<void> 
     console.log(`[admin-config][${requestId}] ${msg}`, data ?? '');
 
   try {
+    // Rate limit admin writes: 10/min
+    const rateLimit = await checkRateLimit(adminClient, user.id, 'admin-config-write', { maxRequests: 10, windowSeconds: 60 });
+    if (!rateLimit.allowed) { sendRateLimitResponse(res, rateLimit.resetAt); return; }
+
     if (!(await isAdmin(user.id))) {
+
       res.status(403).json({ error: 'Admin access required', code: 'FORBIDDEN' });
       return;
     }

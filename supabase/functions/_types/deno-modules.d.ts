@@ -4,6 +4,23 @@
  * are valid modules with known types — without needing Deno installed.
  */
 
+// ── Global Deno namespace ─────────────────────────────────────────────────────
+// Tells VS Code that `Deno` is a valid global in edge function files.
+declare const Deno: {
+  env: {
+    get(key: string): string | undefined;
+    toObject(): Record<string, string>;
+  };
+};
+
+// ── Global EdgeRuntime namespace ──────────────────────────────────────────────
+// Available in Supabase Edge Functions for background tasks.
+declare const EdgeRuntime: {
+  waitUntil(promise: Promise<unknown>): void;
+};
+
+// ── URL module declarations ───────────────────────────────────────────────────
+
 declare module 'https://deno.land/std@0.168.0/http/server.ts' {
   export type ServeHandler = (req: Request) => Response | Promise<Response>;
   export function serve(handler: ServeHandler): void;

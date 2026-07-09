@@ -8,6 +8,7 @@
 import { Router, Request, Response } from 'express';
 import { requireAuth } from '../middleware/auth';
 import { adminClient } from '../lib/supabase';
+import { checkRateLimit, RATE_LIMITS, sendRateLimitResponse } from '../lib/rateLimiter';
 
 const router = Router();
 
@@ -18,7 +19,12 @@ router.post('/', requireAuth, async (req: Request, res: Response): Promise<void>
     console.log(`[style-purchase][${requestId}] ${msg}`, data ?? '');
 
   try {
+    // ── Rate limit ────────────────────────────────────────────────────────────
+    const rateLimit = await checkRateLimit(adminClient, user.id, 'style-purchase', RATE_LIMITS['style-purchase']);
+    if (!rateLimit.allowed) { sendRateLimitResponse(res, rateLimit.resetAt); return; }
+
     const { style_id, currency = 'INR' } = req.body as { style_id?: string; currency?: string };
+
 
     if (!style_id) {
       res.status(400).json({ error: 'style_id is required', code: 'VALIDATION_ERROR' });

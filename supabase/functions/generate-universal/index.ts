@@ -15,13 +15,7 @@ import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { checkRateLimit, RATE_LIMITS, rateLimitResponse } from '../_shared/rateLimiter.ts';
 
-// Type declarations for Deno edge function environment
-declare const Deno: {
-  env: { get(key: string): string | undefined };
-};
-declare const EdgeRuntime: {
-  waitUntil(promise: Promise<unknown>): void;
-};
+
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -79,6 +73,26 @@ serve(async (req: Request) => {
       return rateLimitResponse(rateLimit.resetAt, corsHeaders);
     }
 
+    // ── CREDIT CHECK: deduct 1 credit before starting (free first, then paid) ──
+    const { data: creditType, error: creditError } = await adminClient.rpc('deduct_credit', {
+      p_user_id: user.id,
+    });
+
+    if (creditError) {
+      const msg = creditError.message ?? '';
+      if (msg.includes('INSUFFICIENT_CREDITS')) {
+        return new Response(
+          JSON.stringify({
+            error: 'You have no credits remaining. Purchase a credit pack to continue generating.',
+            code: 'INSUFFICIENT_CREDITS',
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 402 }
+        );
+      }
+      console.error('Credit deduction error:', creditError);
+      throw new Error('Failed to process credit');
+    }
+
     let body: Record<string, unknown>;
     try {
       const text = await req.text();
@@ -134,7 +148,7 @@ serve(async (req: Request) => {
     // ── Return jobId immediately — don't wait for OpenAI ───────────────────
     // EdgeRuntime.waitUntil() lets the background task continue after response is sent.
     EdgeRuntime.waitUntil(
-      runGenerationJob(jobId, {
+      runGenerationJob(jobId, user.id, (creditType as string) ?? 'free', {
         modelId,
         styleId,
         userImageUrl,
@@ -168,6 +182,8 @@ serve(async (req: Request) => {
 // ── Background job processor ────────────────────────────────────────────────
 async function runGenerationJob(
   jobId: string,
+  userId: string,
+  creditType: string,
   params: {
     modelId: string;
     styleId: string;
@@ -185,6 +201,12 @@ async function runGenerationJob(
   );
 
   const markFailed = async (msg: string) => {
+    // Refund the credit so the user doesn't lose it on error
+    try {
+      await supabase.rpc('refund_credit', { p_user_id: userId, p_credit_type: creditType });
+    } catch (refundErr) {
+      console.error('Failed to refund credit for job', jobId, refundErr);
+    }
     await supabase
       .from('generation_jobs')
       .update({ status: 'failed', error: msg })
@@ -310,6 +332,22 @@ async function runGenerationJob(
       .from('generation_jobs')
       .update({ status: 'completed', result_url: storedUrl })
       .eq('id', jobId);
+
+    // ── Log to generation_history for the user's history tab ────────────
+    await supabase
+      .from('generation_history')
+      .insert({
+        user_id: userId,
+        style_id: styleId,
+        image_url: storedUrl,
+        credit_type: creditType,
+        credits_used: 1,
+        status: 'success',
+        metadata: { model_id: modelId, processing_time_ms: processingTime },
+      })
+      .select()
+      .single(); // ignore error — history log is non-critical
+
 
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);

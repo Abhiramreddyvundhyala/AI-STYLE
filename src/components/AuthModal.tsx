@@ -13,19 +13,21 @@ export function AuthModal({ onClose }: { onClose: () => void }) {
 
   const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    if (isSignUp) {
-      signUpWithEmail.mutate({ email, password, displayName, isSeller: false });
-    } else {
-      signInWithEmail.mutate({ email, password });
+    try {
+      if (isSignUp) {
+        await signUpWithEmail.mutateAsync({ email, password, displayName, isSeller: false });
+      } else {
+        await signInWithEmail.mutateAsync({ email, password });
+      }
+      onClose(); // only close on success
+    } catch {
+      // error toast is shown by onError in useAuth — keep modal open for retry
     }
-
-    onClose();
   };
 
   const handleGoogleAuth = () => {
     signInWithGoogle.mutate();
-    onClose();
+    onClose(); // Google redirects away, so close immediately
   };
 
   useEffect(() => {

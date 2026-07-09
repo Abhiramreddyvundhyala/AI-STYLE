@@ -5,19 +5,50 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="India's #1 AI Style Marketplace. Transform your photos with protected AI prompts. Browse, preview, and purchase AI styles from Indian creators." />
     <meta name="keywords" content="AI styles, photo transformation, AI marketplace, India, prompts, photo editing" />
-    <meta name="author" content="PromptStyle" />
+    <meta name="author" content="StyleYourselfAI" />
     <meta name="theme-color" content="#7C3AED" />
-    
+
+    <!-- Security Headers (C6 fix) -->
+    <!-- Prevent this page from being embedded in iframes (clickjacking protection) -->
+    <meta http-equiv="X-Frame-Options" content="DENY" />
+    <!-- Prevent MIME-type sniffing -->
+    <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+    <!--
+      Content-Security-Policy:
+      - script-src: own origin + Razorpay checkout CDN (required for payment SDK)
+      - connect-src: Supabase, Render backend, Razorpay API
+      - img-src: broad to allow AI-generated images from various storage providers
+      - frame-src: Razorpay modal uses an iframe
+      - style-src: Google Fonts + own styles
+      - font-src: Google Fonts CDN
+    -->
+    <meta http-equiv="Content-Security-Policy" content="
+      default-src 'self';
+      script-src 'self' 'unsafe-inline' https://checkout.razorpay.com;
+      connect-src 'self' https://iziwdnibqalminuwlkzf.supabase.co https://ai-style-im28.onrender.com https://api.razorpay.com https://checkout.razorpay.com wss://iziwdnibqalminuwlkzf.supabase.co;
+      img-src 'self' data: blob: https://*.supabase.co https://*.supabase.in https://*.razorpay.com;
+      style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+      font-src 'self' https://fonts.gstatic.com;
+      frame-src https://api.razorpay.com https://checkout.razorpay.com;
+      frame-ancestors 'none';
+      base-uri 'self';
+      form-action 'self';
+    " />
+
+    <!-- Referrer policy: send origin only on same-origin requests -->
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+
+
     <!-- Open Graph -->
-    <meta property="og:title" content="PromptStyle - India's #1 AI Style Marketplace" />
+    <meta property="og:title" content="StyleYourselfAI — Transform Yourself Into Any AI Style" />
     <meta property="og:description" content="Transform your photos with protected AI prompts. Browse, preview, and purchase AI styles from Indian creators." />
     <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://promptstyle.com" />
+    <meta property="og:url" content="https://styleyourselfai.com" />
     <meta property="og:image" content="/og-image.jpg" />
     
     <!-- Twitter -->
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="PromptStyle - AI Style Marketplace" />
+    <meta name="twitter:title" content="StyleYourselfAI — Transform Yourself Into Any AI Style" />
     <meta name="twitter:description" content="Transform your photos with protected AI prompts" />
     <meta name="twitter:image" content="/og-image.jpg" />
     
@@ -30,7 +61,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
     
-    <title>PromptStyle - India's #1 AI Style Marketplace</title>
+    <title>StyleYourselfAI — Transform Yourself Into Any AI Style</title>
   </head>
   <body>
     <div id="root"></div>

@@ -21,7 +21,6 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-declare const Deno: { env: { get(k: string): string | undefined } };
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',

@@ -1,37 +1,47 @@
 /**
  * Admin Dashboard Route
  *
- * Access is restricted to a hardcoded list of admin emails.
- * Users who are not signed in or whose email is not on the list
+ * Access is restricted to users with admin privileges in the database.
+ * Users who are not signed in or whose accounts are not listed as admins
  * are shown an "Access Denied" screen — the dashboard never renders.
  */
 
 import { createFileRoute } from '@tanstack/react-router';
-import { Shield, Lock, ArrowLeft } from 'lucide-react';
+import { Shield, Lock, ArrowLeft, Loader2 } from 'lucide-react';
 import { Link } from '@tanstack/react-router';
 import { AdminDashboard } from '@/components/AdminDashboard';
 import { useAuth } from '@/hooks/useAuth';
 import { AuthModal } from '@/components/AuthModal';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { backendApi } from '@/lib/backendApi';
 
-// ── Only these emails can access /admin ──────────────────────────────────────
-const ADMIN_EMAILS: string[] = [
-  'abhiramreddyvundhyala@gmail.com',
-];
+// NOTE: Admin identity is verified BACKEND-SIDE via the admin_users table.
+// The frontend only shows the UI after the server confirms admin access.
+// There is NO client-side email allowlist — that is insecure.
 
 export const Route = createFileRoute('/admin')({
   component: AdminPage,
 });
 
 function AdminPage() {
-  const { user, isLoading, isAuthenticated } = useAuth();
+  const { isLoading, isAuthenticated } = useAuth();
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [adminStatus, setAdminStatus] = useState<'checking' | 'allowed' | 'denied'>('checking');
+
+  // Verify admin access server-side
+  // Backend /admin-config returns 403 for non-admins via admin_users table check
+  useEffect(() => {
+    if (!isAuthenticated) { setAdminStatus('denied'); return; }
+    backendApi.get('admin-config')
+      .then(() => setAdminStatus('allowed'))
+      .catch(() => setAdminStatus('denied'));
+  }, [isAuthenticated]);
 
   // ── Loading state ────────────────────────────────────────────────────────
-  if (isLoading) {
+  if (isLoading || (isAuthenticated && adminStatus === 'checking')) {
     return (
       <div className="min-h-screen bg-[#0A0A0F] flex items-center justify-center">
-        <div className="w-8 h-8 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
+        <Loader2 className="w-8 h-8 text-violet-500 animate-spin" />
       </div>
     );
   }
@@ -63,11 +73,8 @@ function AdminPage() {
     );
   }
 
-  // ── Signed in but NOT an admin email ────────────────────────────────────
-  const userEmail = user?.email ?? '';
-  const isAdmin = ADMIN_EMAILS.includes(userEmail.toLowerCase());
-
-  if (!isAdmin) {
+  // ── Server denied admin access ───────────────────────────────────────────────
+  if (adminStatus === 'denied') {
     return (
       <div className="min-h-screen bg-[#0A0A0F] flex items-center justify-center p-4">
         <div className="text-center max-w-sm">
@@ -75,12 +82,6 @@ function AdminPage() {
             <Shield size={28} className="text-red-400" />
           </div>
           <h1 className="text-2xl font-bold text-white mb-2">Access Denied</h1>
-          <p className="text-white/50 text-sm mb-1">
-            You are signed in as:
-          </p>
-          <p className="text-violet-400 text-sm font-mono mb-6 break-all">
-            {userEmail}
-          </p>
           <p className="text-white/40 text-xs mb-6">
             This account does not have admin privileges.
           </p>
@@ -95,7 +96,7 @@ function AdminPage() {
     );
   }
 
-  // ── Admin confirmed — render dashboard ──────────────────────────────────
+  // ── Admin confirmed by server — render dashboard ────────────────────────────────────
   return (
     <div className="min-h-screen bg-[#0A0A0F]">
       <AdminDashboard />

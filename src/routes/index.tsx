@@ -29,7 +29,7 @@ export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
       {
-        title: "PromptStyle — Transform Your Photo Into Any Style",
+        title: "StyleYourselfAI — Transform Yourself Into Any AI Style",
       },
       {
         name: "description",
@@ -79,6 +79,8 @@ function Index() {
   const [showAuthModal, setShowAuthModal] = useState(false);
 
   const { data: styles = [] } = useStyles(activeCategory);
+  // Fetch ALL styles (no category filter) so wishlist works across all categories
+  const { data: allStyles = [] } = useStyles("All");
   const { data: selectedStyle } = useStyle(selectedStyleId);
 
   useEffect(() => {
@@ -127,7 +129,7 @@ function Index() {
     return sorted.slice(0, 10);
   }, [styles, query, sort]);
 
-  const wishlistItems = styles.filter((s) => wishlist.includes(s.id));
+  const wishlistItems = allStyles.filter((s) => wishlist.includes(s.id));
 
   return (
     <>
@@ -143,35 +145,13 @@ function Index() {
               ({wishlistItems.length})
             </span>
           </h2>
-          <div className="flex gap-3 overflow-x-auto pb-3 -mx-4 px-4 scrollbar-none">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
             {wishlistItems.map((s) => (
-              <div
+              <StyleCard
                 key={s.id}
-                className="relative shrink-0 w-44 glass-card overflow-hidden group transition-all duration-300 hover:-translate-y-1"
-              >
-                <button
-                  onClick={() => toggleWishlist(s.id)}
-                  className="absolute top-2 right-2 z-10 w-6 h-6 rounded-lg bg-white/90 backdrop-blur-sm hover:bg-red-50 flex items-center justify-center transition-colors border border-gray-200"
-                  aria-label="Remove"
-                >
-                  <X size={12} className="text-gray-600" />
-                </button>
-                <button onClick={() => openStyle(s.id)} className="w-full text-left">
-                  <img
-                    src={s.sample_image_url}
-                    alt={s.title}
-                    className="w-full aspect-[4/5] object-cover group-hover:scale-105 transition-transform duration-500"
-                  />
-                  <div className="p-2.5">
-                    <div className="text-xs font-medium truncate text-gray-800">
-                      {s.title}
-                    </div>
-                    <div className="text-xs font-bold gradient-text-warm mt-0.5">
-                      ₹{s.price}
-                    </div>
-                  </div>
-                </button>
-              </div>
+                style={s}
+                onClick={() => openStyle(s.id)}
+              />
             ))}
           </div>
         </section>

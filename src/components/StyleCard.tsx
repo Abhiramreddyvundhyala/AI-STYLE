@@ -13,7 +13,8 @@ export function StyleCard({
   const { wishlist, toggleWishlist } = useWishlist();
   const [imageLoaded, setImageLoaded] = useState(false);
   const saved = wishlist.includes(style.id);
-  const creatorName = style.seller?.display_name || "Unknown";
+  const creatorName = style.seller?.display_name?.trim() || "Unknown";
+  const avatarInitial = creatorName.charAt(0).toUpperCase() || "?";
 
   const formatSales = (count: number) => {
     if (count >= 1000) return `${(count / 1000).toFixed(1)}k`;
@@ -62,18 +63,6 @@ export function StyleCard({
             }`}
           />
 
-          {/* Category badge */}
-          <div className="absolute top-3 left-3 text-[10px] uppercase tracking-widest px-2.5 py-1 rounded-lg bg-white/90 backdrop-blur-md border border-gray-200 text-gray-700 font-medium">
-            {style.category}
-          </div>
-
-          {/* Bottom info overlay */}
-          <div className="absolute bottom-3 left-3">
-            {/* Price */}
-            <div className="text-2xl font-display font-bold text-gray-900 bg-white/90 backdrop-blur-sm px-3 py-1.5 rounded-lg border border-gray-200">
-              ₹{style.price}
-            </div>
-          </div>
 
           {/* Hover CTA */}
           <div className="absolute bottom-3 right-3 translate-y-3 opacity-0 group-hover:translate-y-0 group-hover:opacity-100 transition-all duration-400 ease-out">
@@ -94,7 +83,7 @@ export function StyleCard({
           {/* Creator */}
           <div className="flex items-center gap-2 min-w-0">
             <div className="w-6 h-6 shrink-0 rounded-lg bg-gradient-to-br from-violet-DEFAULT to-magenta flex items-center justify-center text-[10px] font-bold text-white">
-              {creatorName[0].toUpperCase()}
+              {avatarInitial}
             </div>
             <span className="text-gray-600 truncate">@{creatorName}</span>
           </div>

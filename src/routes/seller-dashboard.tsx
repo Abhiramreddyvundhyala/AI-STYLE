@@ -523,32 +523,43 @@ function UploadModal({
     };
     reader.readAsDataURL(file);
     
-    // Upload to Supabase Storage and get URL
+    // Upload to a dedicated public bucket for marketplace style previews.
+    // IMPORTANT: This bucket (style-images) is PUBLIC — these are marketplace thumbnails.
+    // Private user photos go to user-uploads (private bucket) — NEVER mix them.
     try {
-      const fileName = `style-${Date.now()}-${file.name}`;
-      
+      const fileName = `styles/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+
       const { error: uploadError } = await supabase.storage
-        .from('user-uploads')
+        .from('style-images')
         .upload(fileName, file, {
           cacheControl: '31536000',
           upsert: false,
         });
 
       if (uploadError) {
-        throw uploadError;
+        // Fallback to user-uploads bucket if style-images doesn't exist yet
+        const fallbackName = `style-samples/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+        const { error: fallbackError } = await supabase.storage
+          .from('user-uploads')
+          .upload(fallbackName, file, { cacheControl: '31536000', upsert: false });
+        if (fallbackError) throw fallbackError;
+        const { data: { publicUrl } } = supabase.storage.from('user-uploads').getPublicUrl(fallbackName);
+        setForm((f) => ({ ...f, imageUrl: publicUrl }));
+        // Do NOT log the URL
+        return;
       }
 
-      // Get public URL
+      // Get public URL for the style preview image (legitimate public content)
       const { data: { publicUrl } } = supabase.storage
-        .from('user-uploads')
+        .from('style-images')
         .getPublicUrl(fileName);
 
-      // Store the URL (not base64!)
       setForm((f) => ({ ...f, imageUrl: publicUrl }));
-      console.log('✅ Image uploaded to storage:', publicUrl);
-    } catch (error: any) {
+      // Do NOT log the URL (L4 fix)
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
       console.error('Failed to upload image:', error);
-      toast.error('Failed to upload image: ' + error.message);
+      toast.error('Failed to upload image: ' + msg);
     }
   };
 

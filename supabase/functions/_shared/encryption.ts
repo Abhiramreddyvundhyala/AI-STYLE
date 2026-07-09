@@ -3,12 +3,7 @@
  * Handles prompt encryption/decryption for secure storage
  */
 
-// Type declaration for Deno global (edge functions environment)
-declare const Deno: {
-  env: {
-    get(key: string): string | undefined;
-  };
-};
+
 
 /**
  * Encrypt a prompt using AES-256-GCM

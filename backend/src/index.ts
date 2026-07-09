@@ -67,9 +67,29 @@ app.use('/razorpay-webhook', express.raw({ type: 'application/json' }), (req: Re
   next();
 });
 
-// All other routes use JSON
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
+// All other routes use JSON — limit to 1 MB to prevent DoS via large payloads
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+
+// ── HTTP Security Headers (H12 fix) ───────────────────────────────────────────
+app.use((_req: Request, res: Response, next: NextFunction) => {
+  // Prevent clickjacking
+  res.setHeader('X-Frame-Options', 'DENY');
+  // Prevent MIME sniffing
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  // HSTS — enforce HTTPS for 1 year, include subdomains
+  res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  // Limit referrer info sent to third parties
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  // Restrict powerful browser features
+  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+  // Minimal CSP for API-only backend
+  res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
+  // Remove fingerprinting header
+  res.removeHeader('X-Powered-By');
+  next();
+});
+
 
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get('/health', (_req: Request, res: Response) => {

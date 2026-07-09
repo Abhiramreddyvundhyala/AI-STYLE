@@ -7,12 +7,11 @@
     "strict": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "allowImportingTsExtensions": true,
-    "typeRoots": [
-      "./_types",
-      "../../node_modules/@types"
-    ]
+    "allowImportingTsExtensions": true
   },
+  "files": [
+    "./_types/deno-modules.d.ts"
+  ],
   "include": [
     "**/*.ts",
     "_types/**/*.d.ts"

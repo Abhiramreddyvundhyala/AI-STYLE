@@ -18,7 +18,7 @@ export interface AIModel {
 }
 
 // Single internal model — never displayed to users
-export const DEFAULT_MODEL_ID = 'seedream-5-lite';
+export const DEFAULT_MODEL_ID = 'gpt-image-2';
 
 export const AI_MODELS: AIModel[] = [
   {
@@ -27,8 +27,8 @@ export const AI_MODELS: AIModel[] = [
     description: 'Internal generation engine',
     icon: '✨',
     category: 'featured',
-    provider: 'bytedance',
+    provider: 'openai',
     isEnabled: true,
-    modelIdentifier: 'seedream-5-lite',
+    modelIdentifier: 'gpt-image-2',
   },
 ];

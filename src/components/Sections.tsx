@@ -1,7 +1,8 @@
 import {
-  Palette,
-  Camera,
-  CreditCard,
+  Upload,
+  Wand2,
+  ImageIcon,
+  Download,
   Instagram,
   Twitter,
   Youtube,
@@ -20,25 +21,36 @@ import { AuthModal } from "./AuthModal";
 
 const steps = [
   {
-    icon: Palette,
+    icon: Upload,
     num: "01",
-    title: "Browse Styles",
-    desc: "Explore hundreds of AI styles from top Indian creators — free to preview.",
-    gradient: "from-violet-DEFAULT to-violet-light",
+    title: "Upload Selfie",
+    desc: "Drop in your photo — any clear selfie works. Our AI handles the rest.",
+    gradient: "from-violet-500 to-violet-600",
+    accentRing: "rgba(124,58,237,0.25)",
   },
   {
-    icon: Camera,
+    icon: Wand2,
     num: "02",
-    title: "Upload Photo",
-    desc: "Upload your reference photo and see it transformed in seconds.",
-    gradient: "from-magenta to-rose-500",
+    title: "Choose Style",
+    desc: "Browse 1,000+ premium AI styles — Cinematic, Wedding, Fashion & more.",
+    gradient: "from-pink-500 to-rose-500",
+    accentRing: "rgba(236,72,153,0.25)",
   },
   {
-    icon: CreditCard,
+    icon: ImageIcon,
     num: "03",
-    title: "Pay & Download",
-    desc: "Love the result? Pay and download the full HD version instantly.",
-    gradient: "from-amber-DEFAULT to-amber-warm",
+    title: "Generate AI Image",
+    desc: "One click. Watch your photo transform into a stunning AI masterpiece.",
+    gradient: "from-amber-400 to-orange-500",
+    accentRing: "rgba(245,158,11,0.25)",
+  },
+  {
+    icon: Download,
+    num: "04",
+    title: "Download HD Result",
+    desc: "Love it? Purchase and download the full HD image instantly.",
+    gradient: "from-emerald-500 to-teal-600",
+    accentRing: "rgba(16,185,129,0.25)",
   },
 ];
 
@@ -54,35 +66,60 @@ export function HowItWorks() {
           How It Works
         </h2>
         <p className="text-gray-600 mt-3 max-w-md mx-auto">
-          Three simple steps to transform any photo into any style.
+          Four simple steps to transform any photo into a stunning AI image.
         </p>
       </div>
 
-      <div className="grid md:grid-cols-3 gap-6 relative">
+      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-5 relative">
         {/* Connecting line (desktop) */}
-        <div className="hidden md:block absolute top-14 left-[16.67%] right-[16.67%] h-px bg-gradient-to-r from-violet-DEFAULT/20 via-magenta/20 to-amber-DEFAULT/20" />
+        <div className="hidden lg:block absolute top-[3.25rem] left-[12.5%] right-[12.5%] h-px">
+          <div
+            className="h-full"
+            style={{
+              background: "linear-gradient(90deg, rgba(124,58,237,0.3) 0%, rgba(236,72,153,0.3) 33%, rgba(245,158,11,0.3) 66%, rgba(16,185,129,0.3) 100%)"
+            }}
+          />
+          {/* Arrow dots on the line */}
+          {["25%", "50%", "75%"].map((pos, i) => (
+            <div
+              key={i}
+              className="absolute top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-white border-2"
+              style={{
+                left: pos,
+                borderColor: ["rgba(124,58,237,0.5)", "rgba(236,72,153,0.5)", "rgba(245,158,11,0.5)"][i]
+              }}
+            />
+          ))}
+        </div>
 
         {steps.map((s, i) => (
           <div
             key={i}
-            className="glass-card p-7 transition-all duration-400 hover:-translate-y-2 hover:shadow-[0_20px_50px_-15px_rgba(124,58,237,0.15)] group"
+            className="glass-card p-6 transition-all duration-400 hover:-translate-y-2 group relative overflow-hidden"
+            style={{ boxShadow: `0 4px 20px ${s.accentRing}` }}
           >
-            {/* Step number + icon */}
-            <div className="flex items-center gap-3 mb-5">
+            {/* Subtle inner glow on hover */}
+            <div
+              className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-400 pointer-events-none rounded-[1.25rem]"
+              style={{ background: `radial-gradient(circle at 30% 30%, ${s.accentRing} 0%, transparent 60%)` }}
+            />
+
+            {/* Step icon */}
+            <div className="relative flex items-center gap-3 mb-5">
               <div
-                className={`w-12 h-12 rounded-2xl bg-gradient-to-br ${s.gradient} flex items-center justify-center shadow-lg transition-transform duration-300 group-hover:scale-110`}
+                className={`w-12 h-12 rounded-2xl bg-gradient-to-br ${s.gradient} flex items-center justify-center shadow-lg transition-all duration-300 group-hover:scale-110 group-hover:shadow-xl`}
               >
-                <s.icon size={22} className="text-white" />
+                <s.icon size={21} className="text-white" />
               </div>
-              <span className="text-xs font-display font-bold text-gray-400 uppercase tracking-widest">
+              <span className="text-[10px] font-display font-bold text-gray-400 uppercase tracking-[0.15em]">
                 Step {s.num}
               </span>
             </div>
 
-            <h3 className="text-lg font-display font-bold text-gray-900">
+            <h3 className="relative text-base font-display font-bold text-gray-900">
               {s.title}
             </h3>
-            <p className="text-gray-600 mt-2 text-sm leading-relaxed">
+            <p className="relative text-gray-500 mt-2 text-sm leading-relaxed">
               {s.desc}
             </p>
           </div>
@@ -183,7 +220,7 @@ export function Footer() {
               <Sparkles size={13} className="text-white" />
             </div>
             <span className="font-display text-base font-bold gradient-text">
-              PromptStyle
+              StyleYourselfAI
             </span>
           </div>
           <p className="text-sm text-gray-600 max-w-xs leading-relaxed">
@@ -220,7 +257,7 @@ export function Footer() {
         </div>
       </div>
       <div className="text-center text-xs text-gray-400 pb-6">
-        © 2026 PromptStyle. All rights reserved.
+        © 2026 StyleYourselfAI. All rights reserved.
       </div>
     </footer>
   );

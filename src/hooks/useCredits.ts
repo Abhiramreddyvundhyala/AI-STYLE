@@ -336,10 +336,39 @@ export function useGenerationHistory(page = 1, pageSize = 20) {
   });
 }
 
-// ─── Refresh balance helper (call after generation) ───────────────────────────
+// ─── Refresh balance helper (call after generation) ───────────────────────────────────────
+// Uses refetchQueries (not invalidate) so the update is immediate.
 export function useRefreshCredits() {
   const queryClient = useQueryClient();
   return useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: ['credits', 'balance'] });
+    // Force an immediate network refetch (not just mark as stale)
+    queryClient.refetchQueries({ queryKey: ['credits', 'balance'] });
+  }, [queryClient]);
+}
+
+// ─── Optimistic credit decrement ───────────────────────────────────────────
+// Call when generation starts to instantly reflect the deducted credit in the
+// UI, before the network round-trip completes.
+export function useDecrementCreditOptimistically() {
+  const queryClient = useQueryClient();
+  return useCallback(() => {
+    queryClient.setQueryData<UserCredits>(['credits', 'balance'], (old) => {
+      if (!old) return old;
+      if (old.free_credits_remaining > 0) {
+        return {
+          ...old,
+          free_credits_remaining: old.free_credits_remaining - 1,
+          total_credits: old.total_credits - 1,
+        };
+      }
+      if (old.paid_credits > 0) {
+        return {
+          ...old,
+          paid_credits: old.paid_credits - 1,
+          total_credits: old.total_credits - 1,
+        };
+      }
+      return old;
+    });
   }, [queryClient]);
 }

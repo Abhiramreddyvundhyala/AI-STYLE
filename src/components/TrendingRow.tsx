@@ -1,9 +1,91 @@
-import { Star, Flame, Loader2, TrendingUp } from "lucide-react";
+import { Star, Flame, Loader2, TrendingUp, Bookmark } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { useTrendingStyles } from "@/hooks/useStyles";
+import { useWishlist } from "@/hooks/useWishlist";
+import { useState } from "react";
+import type { Style } from "@/hooks/useStyles";
 
-export function TrendingRow() {
+/* ─── Single Trending Card (matches StyleCard proportions) ──────────────── */
+function TrendingCard({ style, index }: { style: Style; index: number }) {
   const { openStyle } = useApp();
+  const { wishlist, toggleWishlist } = useWishlist();
+  const [imageLoaded, setImageLoaded] = useState(false);
+  const saved = wishlist.includes(style.id);
+  const creatorName = style.seller?.display_name || "Unknown";
+
+  const formatSales = (count: number) => {
+    if (count >= 1000) return `${(count / 1000).toFixed(1)}k`;
+    return count.toString();
+  };
+
+  return (
+    <div className="snap-start shrink-0 w-44 sm:w-48 group relative glass-card glass-card-hover overflow-hidden">
+
+      {/* ─── Bookmark ──────────────────────────────────────────── */}
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          toggleWishlist(style);
+        }}
+        className={`absolute top-3 right-3 z-10 w-8 h-8 rounded-xl flex items-center justify-center transition-all duration-300 ${
+          saved
+            ? "bg-violet-DEFAULT/20 border border-violet-DEFAULT/40 shadow-[0_0_12px_rgba(124,58,237,0.3)]"
+            : "bg-white/90 backdrop-blur-sm border border-gray-200 hover:bg-white"
+        }`}
+        aria-label="Save"
+      >
+        <Bookmark
+          size={13}
+          className={saved ? "fill-violet-light text-violet-light" : "text-gray-500"}
+        />
+      </button>
+
+      {/* ─── Image + overlays ──────────────────────────────────── */}
+      <button onClick={() => openStyle(style.id)} className="block w-full text-left">
+        <div className="relative overflow-hidden aspect-[4/5] bg-gray-100">
+
+          {/* Loading skeleton */}
+          {!imageLoaded && (
+            <div className="absolute inset-0 bg-gradient-to-br from-gray-100 to-gray-200 animate-pulse" />
+          )}
+
+          <img
+            src={style.sample_image_url}
+            alt={style.title}
+            onLoad={() => setImageLoaded(true)}
+            className={`w-full h-full object-cover transition-all duration-700 ease-out group-hover:scale-110 ${
+              imageLoaded ? "opacity-100" : "opacity-0"
+            }`}
+          />
+
+          {/* Trending badge — bottom right */}
+          <div className="absolute bottom-3 right-3 text-[9px] uppercase tracking-wider px-2 py-0.5 rounded-md bg-amber-400/20 backdrop-blur-sm border border-amber-400/30 text-amber-600 font-bold flex items-center gap-1">
+            <Flame size={8} /> HOT
+          </div>
+        </div>
+
+        {/* ─── Card Footer ───────────────────────────────────────── */}
+        <div className="p-3">
+          <h3 className="font-display font-semibold text-[13px] text-gray-900 truncate">
+            {style.title}
+          </h3>
+          <div className="mt-2 flex items-center justify-between text-[11px]">
+            <span className="text-gray-500 truncate">@{creatorName}</span>
+            <div className="flex items-center gap-1 shrink-0 text-gray-600 ml-2">
+              <Star size={10} className="fill-amber-400 text-amber-400" />
+              <span>{style.avg_rating.toFixed(1)}</span>
+              <span className="text-gray-300">·</span>
+              <span>{formatSales(style.sales_count)} sold</span>
+            </div>
+          </div>
+        </div>
+      </button>
+    </div>
+  );
+}
+
+/* ─── TrendingRow ───────────────────────────────────────────────────────── */
+export function TrendingRow() {
   const { data: trending = [], isLoading } = useTrendingStyles(5);
 
   if (isLoading) {
@@ -17,11 +99,6 @@ export function TrendingRow() {
   }
 
   if (trending.length === 0) return null;
-
-  const formatSales = (count: number) => {
-    if (count >= 1000) return `${(count / 1000).toFixed(1)}k`;
-    return count.toString();
-  };
 
   return (
     <section className="max-w-7xl mx-auto px-4 sm:px-6 pt-12">
@@ -47,49 +124,7 @@ export function TrendingRow() {
       {/* ─── Scroll Row ──────────────────────────────────────── */}
       <div className="flex gap-4 overflow-x-auto pb-4 -mx-4 px-4 scrollbar-none snap-x">
         {trending.map((s, index) => (
-          <button
-            key={s.id}
-            onClick={() => openStyle(s.id)}
-            className="snap-start shrink-0 w-72 md:w-80 group text-left glass-card overflow-hidden transition-all duration-400 hover:-translate-y-2 hover:shadow-[0_20px_50px_-15px_rgba(124,58,237,0.2)]"
-          >
-            <div className="relative aspect-[16/10] overflow-hidden">
-              <img
-                src={s.sample_image_url}
-                alt={s.title}
-                className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-[#08080C] via-[#08080C]/30 to-transparent" />
-
-              {/* Rank badge */}
-              <div className="absolute top-3 left-3 w-9 h-9 rounded-xl bg-gradient-to-br from-amber-DEFAULT to-amber-warm text-[#08080C] font-display font-bold text-lg flex items-center justify-center shadow-[0_4px_15px_rgba(245,158,11,0.4)]">
-                {index + 1}
-              </div>
-
-              {/* Trending label */}
-              <div className="absolute top-3 right-3 text-[10px] uppercase tracking-wider px-2.5 py-1 rounded-lg bg-amber-DEFAULT/15 backdrop-blur-sm border border-amber-DEFAULT/25 text-amber-DEFAULT font-bold flex items-center gap-1">
-                <Flame size={9} /> Trending
-              </div>
-
-              {/* Bottom info */}
-              <div className="absolute bottom-3 left-3 right-3 flex items-end justify-between">
-                <div>
-                  <div className="font-display font-bold text-white text-sm">
-                    {s.title}
-                  </div>
-                  <div className="text-xs text-white/80 flex items-center gap-1.5 mt-0.5">
-                    <Star
-                      size={10}
-                      className="fill-amber-DEFAULT text-amber-DEFAULT"
-                    />{" "}
-                    {s.avg_rating.toFixed(1)} · {formatSales(s.sales_count)} sold
-                  </div>
-                </div>
-                <div className="text-lg font-display font-bold gradient-text-warm">
-                  ₹{s.price}
-                </div>
-              </div>
-            </div>
-          </button>
+          <TrendingCard key={s.id} style={s} index={index} />
         ))}
       </div>
     </section>

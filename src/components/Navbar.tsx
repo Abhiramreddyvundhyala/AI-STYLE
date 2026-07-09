@@ -1,8 +1,7 @@
 import { useState } from "react";
-import { Menu, X, Heart, ChevronDown, LogOut, User, Sparkles } from "lucide-react";
+import { Menu, X, ChevronDown, LogOut, User, Sparkles } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/hooks/useAuth";
-import { useFollows } from "@/hooks/useFollows";
 import { AuthModal } from "./AuthModal";
 import { CreditBalance } from "./CreditBalance";
 import { toast } from "sonner";
@@ -12,7 +11,6 @@ export function Navbar() {
   const [toolsOpen, setToolsOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
-  const { follows } = useFollows();
   const { isAuthenticated, user, signOut } = useAuth();
   const navigate = useNavigate();
 
@@ -63,7 +61,7 @@ export function Navbar() {
             <Sparkles size={20} className="text-white" strokeWidth={2.5} />
           </div>
           <span className="font-display text-lg font-bold tracking-tight text-gray-900">
-            PromptStyle
+            StyleYourselfAI
           </span>
         </Link>
 
@@ -137,25 +135,6 @@ export function Navbar() {
 
         {/* ─── Desktop Actions ───────────────────────────────── */}
         <div className="hidden md:flex items-center gap-2.5">
-          {/* Following */}
-          <button
-            className="relative w-9 h-9 rounded-xl bg-gray-100 hover:bg-gray-200 border border-gray-200 flex items-center justify-center transition-all duration-200"
-            aria-label="Following"
-          >
-            <Heart
-              size={16}
-              className={
-                follows.length
-                  ? "fill-magenta text-magenta"
-                  : "text-gray-500"
-              }
-            />
-            {follows.length > 0 && (
-              <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-gradient-to-br from-violet-DEFAULT to-magenta text-white text-[9px] font-bold flex items-center justify-center shadow-lg">
-                {follows.length}
-              </span>
-            )}
-          </button>
 
           {isAuthenticated ? (
             <>

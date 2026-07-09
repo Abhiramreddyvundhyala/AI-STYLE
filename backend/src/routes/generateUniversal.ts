@@ -48,10 +48,63 @@ router.post('/', requireAuth, async (req: Request, res: Response): Promise<void>
       textModifications?: string;
     };
 
-    if (!modelId) { res.status(400).json({ error: 'Missing modelId parameter' }); return; }
-    if (!styleId) { res.status(400).json({ error: 'Missing styleId parameter' }); return; }
+    // ── Input validation (H11 fix) ─────────────────────────────────────────
+    // Allowlist of known model IDs — never pass arbitrary strings to AI APIs
+    const ALLOWED_MODEL_IDS = ['gpt-image-2', 'gemini-imagen-4-ultra', 'replicate-sdxl', 'default'];
+    if (!modelId || !ALLOWED_MODEL_IDS.includes(modelId)) {
+      res.status(400).json({ error: 'Invalid or missing modelId', code: 'VALIDATION_ERROR' });
+      return;
+    }
 
-    // ── Create generation job record ──────────────────────────────────────
+    // styleId must be a valid UUID
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!styleId || !UUID_RE.test(styleId)) {
+      res.status(400).json({ error: 'Invalid or missing styleId', code: 'VALIDATION_ERROR' });
+      return;
+    }
+
+    // Width and height must be reasonable integers if provided
+    if (width !== undefined && (typeof width !== 'number' || !Number.isInteger(width) || width < 256 || width > 2048)) {
+      res.status(400).json({ error: 'Invalid width (must be 256–2048)', code: 'VALIDATION_ERROR' });
+      return;
+    }
+    if (height !== undefined && (typeof height !== 'number' || !Number.isInteger(height) || height < 256 || height > 2048)) {
+      res.status(400).json({ error: 'Invalid height (must be 256–2048)', code: 'VALIDATION_ERROR' });
+      return;
+    }
+
+    // Text modifications length limit
+    if (textModifications && (typeof textModifications !== 'string' || textModifications.length > 500)) {
+      res.status(400).json({ error: 'textModifications must be ≤500 characters', code: 'VALIDATION_ERROR' });
+      return;
+    }
+
+    // userImageUrl basic safety check (must be a URL if provided)
+    if (userImageUrl && typeof userImageUrl !== 'string') {
+      res.status(400).json({ error: 'Invalid userImageUrl', code: 'VALIDATION_ERROR' });
+      return;
+    }
+
+
+    // ── CREDIT CHECK: deduct 1 credit before starting ────────────────────────────
+    const { data: creditType, error: creditError } = await adminClient.rpc('deduct_credit', {
+      p_user_id: user.id,
+    });
+    if (creditError) {
+      const msg = creditError.message ?? '';
+      if (msg.includes('INSUFFICIENT_CREDITS')) {
+        res.status(402).json({
+          error: 'You have no credits remaining. Purchase a credit pack to continue generating.',
+          code: 'INSUFFICIENT_CREDITS',
+        });
+        return;
+      }
+      log('Credit deduction error', creditError);
+      res.status(500).json({ error: 'Failed to process credit' });
+      return;
+    }
+
+    // ── Create generation job record ───────────────────────────────────────
     const { data: job, error: jobError } = await adminClient
       .from('generation_jobs')
       .insert({ status: 'pending', model_id: modelId, style_id: styleId, user_id: user.id })
@@ -59,6 +112,8 @@ router.post('/', requireAuth, async (req: Request, res: Response): Promise<void>
       .single();
 
     if (jobError || !job) {
+      // Refund credit — job never started
+      await adminClient.rpc('refund_credit', { p_user_id: user.id, p_credit_type: creditType });
       log('Failed to create job', jobError);
       res.status(500).json({ error: 'Failed to create generation job' });
       return;
@@ -67,7 +122,7 @@ router.post('/', requireAuth, async (req: Request, res: Response): Promise<void>
     const jobId = job.id as string;
     log('Job created', jobId);
 
-    // ── Return jobId immediately, run generation in background ────────────
+    // ── Return jobId immediately, run generation in background ────────────────
     res.status(202).json({
       jobId,
       status: 'pending',
@@ -75,7 +130,7 @@ router.post('/', requireAuth, async (req: Request, res: Response): Promise<void>
     });
 
     // Background processing (non-blocking)
-    runGenerationJob(jobId, {
+    runGenerationJob(jobId, user.id, (creditType as string) ?? 'free', {
       modelId, styleId, userImageUrl, faceEmbedding,
       preserveFaceStrength, width, height, textModifications,
     }).catch((err) => {
@@ -89,9 +144,11 @@ router.post('/', requireAuth, async (req: Request, res: Response): Promise<void>
   }
 });
 
-// ── Background job processor ─────────────────────────────────────────────────
+// ── Background job processor ─────────────────────────────────────────────
 async function runGenerationJob(
   jobId: string,
+  userId: string,
+  creditType: string,
   params: {
     modelId: string;
     styleId: string;
@@ -104,6 +161,12 @@ async function runGenerationJob(
   }
 ): Promise<void> {
   const markFailed = async (msg: string) => {
+    // Refund credit on failure so user doesn't lose it
+    try {
+      await adminClient.rpc('refund_credit', { p_user_id: userId, p_credit_type: creditType });
+    } catch (refundErr) {
+      console.error('Failed to refund credit for job', jobId, refundErr);
+    }
     await adminClient.from('generation_jobs').update({ status: 'failed', error: msg }).eq('id', jobId);
     console.error('📕 Job failed:', jobId, msg);
   };
